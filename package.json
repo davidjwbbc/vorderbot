@@ -1,0 +1,13 @@
+{
+  "name": "vorderbot",
+  "version": "1.0.0",
+  "description": "VorderBot - A Countdown Bot",
+  "main": "vorderbot.js",
+  "dependencies": {"@slack/client": "3.15.0"},
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "David Waring",
+  "license": "ISC"
+}
