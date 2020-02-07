@@ -116,6 +116,21 @@ Dictionary.prototype.wordsContaining = function(letters) {
     return ret;
 }
 
+Dictionary.prototype.wordsWithNLetters = function(word_len) {
+    if (!this.ready) return null;
+    var words = [];
+    for (var word in this.dictionary) {
+	if (word.length == word_len) {
+	    words.push(word);
+	}
+    }
+    return words;
+}
+
+Dictionary.prototype.contains = function(word) {
+  return (word.toLowerCase() in this.dictionary);
+}
+
 const dictionary = new Dictionary("sowpods.txt");
 
 const commands = {
@@ -126,6 +141,10 @@ const commands = {
   'words': {
     fn: (u, c, args, ts) => { do_words(c); },
     help: 'Start a letters game'
+  },
+  'conundrum': {
+    fn: (u, c, args, ts) => { do_conundrum(c); },
+    help: 'Start a conundrum'
   },
   'list': {
     fn: (u, c, args, ts) => { do_last_words_list(c,args); },
@@ -150,7 +169,7 @@ function Rec(lvl, target, chosen, exp) {
 	  } else if (op == 2) {
 	    if (chosen[j] != 1) {
 	      wd = true;
-            }
+	    }
 	  } else {
 	    if (chosen[j] != 1 && chosen[i] % chosen[j] == 0) {
 	      wd = true;
@@ -179,23 +198,23 @@ function Rec(lvl, target, chosen, exp) {
 	    default:
 		break;
 	    }
-            chosen[j] = 0;
+	    chosen[j] = 0;
 	    if (chosen[i] == target) {
-              if (sol === null || sol.length > exp.length) {
+	      if (sol === null || sol.length > exp.length) {
 		sol = exp.slice();
-              }
+	      }
 	    } else {
 	      if (lvl < 5) {
-                var s = Rec(lvl+1, target, chosen, exp.slice());
-                if (s !== null) {
+		var s = Rec(lvl+1, target, chosen, exp.slice());
+		if (s !== null) {
 		  if (sol === null || sol.length > s.length) {
 		    sol = s.slice();
 		  }
 		}
-              }
+	      }
 	    }
 	    chosen[i] = sti;
-            chosen[j] = stj;
+	    chosen[j] = stj;
 	    exp.pop();
 	  }
 	}
@@ -255,26 +274,26 @@ function do_equation(user, channel, possible_answer, ts) {
       possible_games.forEach(function(g) {
 	var used_numbers = vals.slice(1);
 	used_numbers.sort((a,b) => a-b);
-        if (contains(g["numbers"], used_numbers)) {
+	if (contains(g["numbers"], used_numbers)) {
 	  var diff = Math.abs(g["target"] - vals[0]);
-          if (diff <= 10) {
+	  if (diff <= 10) {
 	    if (diff < g["closest_guess_away"]) {
 	      g["closest_guess"] = vals[0];
-              g["closest_guess_away"] = diff;
+	      g["closest_guess_away"] = diff;
 	    }
 	    if (!(user in g["guesses"]) || g["guesses"][user]["away"] > diff) {
 	      g["guesses"][user] = {"away": diff, "total": vals[0], "solution": possible_answer, ts: ts};
 	    }
 	  }
-        }
+	}
       });
     }
   });
   proc.stdout.on("close", code => {
     for (var i in appData.calculating) {
       if (appData.calculating[i].proc === proc) {
-        appData.calculating.splice(i,1);
-        break;
+	appData.calculating.splice(i,1);
+	break;
       }
     }
   });
@@ -291,6 +310,27 @@ function is_round_answer(user, channel, possible_answer, ts) {
     var lpa = possible_answer.toLowerCase();
     var lpa_sorted = lpa.split('');
     lpa_sorted.sort();
+    if (lpa.length == 9) {
+      for (var gid in appData.conundrumGames) {
+	var g = appData.conundrumGames[gid];
+	if (g["channel"] != channel) continue;
+	var game_word = g["word"].toLowerCase();
+	var game_letters_sorted = game_word.split('');
+	game_letters_sorted.sort();
+	if (lpa_sorted == game_letters_sorted) {
+	  if (g["word"].toLowerCase() == lpa()) {
+	    g["winner"] = {'user': user, 'ts': ts};
+	    end_conundrum(gid);
+	  } else {
+	    if (dictionary.contains(lpa)) {
+	      rtm.sendMessage(`Good guess <@${user}>, but not the 9 letter word I'm looking for!`, g.channel);
+	    } else {
+	      rtm.sendMessage(`The word ${possible_answer} is not in my dictionary!`, g.channel);
+	    }
+	  }
+	}
+      }
+    }
     for (var gid in appData.wordGames) {
       var g = appData.wordGames[gid];
       if (g["channel"] != channel) continue;
@@ -301,11 +341,11 @@ function is_round_answer(user, channel, possible_answer, ts) {
 	  if (!(user in g["guesses"]) ||
 	      lpa.length > g["guesses"][user].word.length) {
 	    g["guesses"][user] = {word: possible_answer, ts: ts};
-            if (g["longest_guess"] < possible_answer.length) {
+	    if (g["longest_guess"] < possible_answer.length) {
 	      g["longest_guess"] = possible_answer.length
 	    }
 	  }
-        } else {
+	} else {
 	  if (g["bad_guesses"].indexOf(lpa)<0) {
 	    g["bad_guesses"].push(lpa);
 	  }
@@ -357,6 +397,21 @@ function end_game(game_id) {
     rtm.sendMessage(`The longest word was ${w.length} letters long: ${w}`, game.channel);
   }
   return true;
+}
+
+function end_conundrum(game_id) {
+  if (!(game_id in appData.conundrumGames)) return false;
+  var game = appData.conundrumGames[game_id];
+  delete appData.conundrumGames[game_id];
+  if (game["winner"] === null) {
+    rtm.sendMessage("Nobody found the conundrum!", game.channel);
+    rtm.sendMessage(`The word I was looking for is: ${game["word"]}`, game.channel);
+  } else {
+    var user = game["winner"]['user'];
+    var ts = game["winner"]['ts'];
+    rtm.sendMessage(`Congratulations <@${user}> the answer I was looking for was ${game["word"]}, you score 10 points!`, game.channel);
+    rtm._makeAPICall('reactions.add', {name: 'party-parrot'}, {channel: game.channel, timestamp: ts});
+  }
 }
 
 function end_nums_game(game_id) {
@@ -467,6 +522,29 @@ function do_words(channel) {
   return null;
 }
 
+function do_conundrum(channel) {
+  var words = dictionary.wordsWithNLetters(9);
+  var word_idx = Math.floor(Math.random()*words.length);
+  var word = words[word_idx];
+  var game_id = Math.floor(Math.random()*1000000);
+  while (game_id in appData.conundrumGames) {
+    game_id = Math.floor(Math.random()*1000000);
+  }
+  var letters = sample(word, 9);
+  appData.conundrumGames[game_id] = {
+    'channel': channel,
+    'word': word,
+    'letters': letters,
+    'winner': null
+  };
+  var formatted_letters = "`" + letters.split('').join("` `") + "`"
+  rtm.sendMessage(`Conundrum is ${formatted_letters}   you have 30 seconds.....`, channel);
+  setTimeout(function() {
+    end_conundrum(game_id);
+  }, 30000);
+  return null;
+}
+
 function do_last_words_list(channel, args) {
   if (appData.lastWords.hasOwnProperty(channel)) {
     var words_list = appData.lastWords[channel].slice();
@@ -476,12 +554,12 @@ function do_last_words_list(channel, args) {
     var message = "The longest words out of " + words_list.length.toString() + " words from the last words game were:";
     if (args.length > 0) {
       if (args[0].toLowerCase() == "full") {
-        max_words = -1;
-        message = "The full list of " + words_list.length.toString() + " words from the last words game were:";
+	max_words = -1;
+	message = "The full list of " + words_list.length.toString() + " words from the last words game were:";
       } else {
 	try {
 	  just_length = parseInt(args[0]);
-          if (just_length > 0 && just_length <= words_list[0].length) {
+	  if (just_length > 0 && just_length <= words_list[0].length) {
 	    message = "The " + just_length.toString() + " letter words in the last words game were:";
 	    max_words = -1;
 	  } else {
@@ -489,7 +567,7 @@ function do_last_words_list(channel, args) {
 	    return null;
 	  }
 	} catch (error) {
-          rtm.sendMessage("\"list " + args.join(' ') + "\" not understood!", channel);
+	  rtm.sendMessage("\"list " + args.join(' ') + "\" not understood!", channel);
 	  return null;
         }
       }
@@ -499,7 +577,7 @@ function do_last_words_list(channel, args) {
     while (words_list.length > 0 && (max_words < 0 || word_count < max_words)) {
       if (just_length > 0 && words_list[0].length != just_length) {
 	words_list.splice(0,1);
-        continue;
+	continue;
       }
       if (length != words_list[0].length) {
 	length = words_list[0].length;
@@ -509,16 +587,16 @@ function do_last_words_list(channel, args) {
       var w = [];
       while (words_list.length > 0 && words_list[0].length == length) {
 	w.push(words_list[0]);
-        words_list.splice(0,1);
-        if (w.length == max_per_line) {
+	words_list.splice(0,1);
+	if (w.length == max_per_line) {
 	  message += "  " + w.join(", ");
 	  if (words_list[0].length == length) {
 	    message += ",";
-          }
-          message += "\n";
-          word_count += w.length;
-          w = [];
-        }
+	  }
+	  message += "\n";
+	  word_count += w.length;
+	  w = [];
+	}
       }
       if (w.length > 0) {
 	message += "  " + w.join(", ");
