@@ -135,24 +135,24 @@ const dictionary = new Dictionary("sowpods.txt");
 
 const commands = {
   'numbers': {
-    fn: (u, c, args, ts) => { do_numbers(c); },
-    help: 'Start a numbers game'
+    fn: (u, c, args, ts) => { do_numbers(c, args); },
+    help: 'Start a numbers game. If "numbers &lt;n&gt;" is used, start a game using _n_ large numbers. _n_ must be between 0 and 4 inclusive.'
   },
   'words': {
-    fn: (u, c, args, ts) => { do_words(c); },
-    help: 'Start a letters game'
+    fn: (u, c, args, ts) => { do_words(c, args); },
+    help: 'Start a letters game. If "words &lt;n&gt;" is used, start a game using _n_ vowels. _n_ must be between 3 and 5 inclusive.'
   },
   'conundrum': {
     fn: (u, c, args, ts) => { do_conundrum(c); },
-    help: 'Start a conundrum'
+    help: 'Start a conundrum.'
   },
   'list': {
     fn: (u, c, args, ts) => { do_last_words_list(c,args); },
-    help: 'List the full set of valid words for the last words game or if "list &lt;n&gt;" is used, only list words of length &lt;n&gt;'
+    help: 'List the full set of valid words for the last words game or if "list &lt;n&gt;" is used, only list words of length _n_.'
   },
   'help': {
     fn: (u, c, args, ts) => { do_help(c); },
-    help: 'Show this help'
+    help: 'Show this help.'
   }
 };
 
@@ -302,6 +302,14 @@ function do_equation(user, channel, possible_answer, ts) {
   return true;
 }
 
+function arrays_equal(a, b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
 function is_round_answer(user, channel, possible_answer, ts) {
   const is_alpha = new RegExp("^[a-zA-Z]*$");
   var ret = false;
@@ -317,8 +325,8 @@ function is_round_answer(user, channel, possible_answer, ts) {
 	var game_word = g["word"].toLowerCase();
 	var game_letters_sorted = game_word.split('');
 	game_letters_sorted.sort();
-	if (lpa_sorted == game_letters_sorted) {
-	  if (g["word"].toLowerCase() == lpa()) {
+	if (arrays_equal(lpa_sorted,game_letters_sorted)) {
+	  if (g["word"].toLowerCase() == lpa) {
 	    g["winner"] = {'user': user, 'ts': ts};
 	    end_conundrum(gid);
 	  } else {
@@ -457,8 +465,16 @@ function end_nums_game(game_id) {
   }
 }
 
-function do_numbers(channel) {
+function do_numbers(channel, args) {
   var t = Math.floor(Math.random()*5); // [0,4]
+  if (args.length > 0 && args[0].length > 0) {
+    var val = parseInt(args[0]);
+    if (!isNaN(val) && val >= 0 && val <= 4) {
+      t = val;
+    } else {
+      rtm.sendMessage(`I did not understand "${args[0]}" as a number of large numbers between 0 and 4, continuing with a random number of large numbers.`, channel);
+    }
+  }
   var n = sample([25,50,75,100], t);
   var elsewhere = 6 - t;
   n = n.concat(sample([1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10], elsewhere));
@@ -477,8 +493,16 @@ function do_numbers(channel) {
   appData.numsGames[game_id].shortest_solution = shortest_numbers_solution(n, total);
 }
 
-function do_words(channel) {
+function do_words(channel, args) {
   var num_vowels = 3+Math.floor(Math.random()*3); // [3,5]
+  if (args.length > 0 && args[0].length > 0) {
+    var val = parseInt(args[0]);
+    if (!isNaN(val) && val >= 3 && val <= 5) {
+      num_vowels = val;
+    } else {
+      rtm.sendMessage(`I did not understand "${args[0]}" as a number of vowels between 3 and 5, continuing with a random number.`, channel);
+    }
+  }
   var num_consonants = 9 - num_vowels;
   var vowels = "";
   for (var v in vowel_freqs) {
@@ -537,7 +561,7 @@ function do_conundrum(channel) {
     'letters': letters,
     'winner': null
   };
-  var formatted_letters = "`" + letters.split('').join("` `") + "`"
+  var formatted_letters = "`" + letters.toUpperCase().split('').join("` `") + "`"
   rtm.sendMessage(`Conundrum is ${formatted_letters}   you have 30 seconds.....`, channel);
   setTimeout(function() {
     end_conundrum(game_id);
@@ -639,6 +663,7 @@ rtm.on(CLIENT_EVENTS.RTM.AUTHENTICATED, (connectData) => {
   // Cache the data necessary for this app in memory
   appData.selfId = connectData.self.id;
   appData.teamId = connectData.team.id;
+  appData.conundrumGames = {};
   appData.wordGames = {};
   appData.numsGames = {};
   appData.numsFinishedGames = {};
