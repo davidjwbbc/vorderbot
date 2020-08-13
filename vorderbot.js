@@ -1,4 +1,18 @@
-const { RtmClient, CLIENT_EVENTS, RTM_EVENTS } = require('@slack/client');
+const { RTMClient, LogLevel } = require('@slack/rtm-api');
+
+// Emoji's for winning
+const WORDS_SHORT_WIN = 'thumbsup';
+const WORDS_MAX_WIN = 'tada';
+const WORDS_9_WIN = 'tada';
+const CONUNDRUM_WIN = 'tada';
+const NUMBERS_AWAY_WIN = 'thumbsup';
+const NUMBERS_TARGET_WIN = 'tada';
+
+let proxy = 0;
+if (process.env.https_proxy) {
+  const HttpsProxyAgent = require('https-proxy-agent');
+  proxy = new HttpsProxyAgent(process.env.https_proxy);
+}
 
 // An access token (from your Slack app or custom integration - usually xoxb)
 const token = process.env.SLACK_TOKEN;
@@ -8,7 +22,9 @@ const appData = {};
 
 // Initialize the RTM client with the recommended settings. Using the defaults for these
 // settings is deprecated.
-const rtm = new RtmClient(token, {
+const rtm = new RTMClient(token, {
+  agent: proxy,
+  /*logLevel: LogLevel.DEBUG,*/
   dataStore: false,
   useRtmConnect: true,
 });
@@ -135,23 +151,23 @@ const dictionary = new Dictionary("sowpods.txt");
 
 const commands = {
   'numbers': {
-    fn: (u, c, args, ts) => { do_numbers(c, args); },
+    fn: async (u, c, args, ts) => { await do_numbers(c, args); },
     help: 'Start a numbers game. If "numbers &lt;n&gt;" is used, start a game using _n_ large numbers. _n_ must be between 0 and 4 inclusive.'
   },
   'words': {
-    fn: (u, c, args, ts) => { do_words(c, args); },
+    fn: async (u, c, args, ts) => { await do_words(c, args); },
     help: 'Start a letters game. If "words &lt;n&gt;" is used, start a game using _n_ vowels. _n_ must be between 3 and 5 inclusive.'
   },
   'conundrum': {
-    fn: (u, c, args, ts) => { do_conundrum(c); },
+    fn: async (u, c, args, ts) => { await do_conundrum(c); },
     help: 'Start a conundrum.'
   },
   'list': {
-    fn: (u, c, args, ts) => { do_last_words_list(c,args); },
+    fn: async (u, c, args, ts) => { await do_last_words_list(c,args); },
     help: 'List the full set of valid words for the last words game or if "list &lt;n&gt;" is used, only list words of length _n_.'
   },
   'help': {
-    fn: (u, c, args, ts) => { do_help(c); },
+    fn: async (u, c, args, ts) => { await do_help(c); },
     help: 'Show this help.'
   }
 };
@@ -241,7 +257,7 @@ function is_nick(msg_nick, nick) {
   return msg_nick == ("<@" + nick + ">");
 }
 
-function do_help(channel) {
+async function do_help(channel) {
   var cmds = Object.getOwnPropertyNames(commands);
   cmds.sort();
 
@@ -255,20 +271,23 @@ function do_help(channel) {
     var show_cmd = (cmd + (" ".repeat(max_cmd_len-1))).substr(0,max_cmd_len);
     message += ("\n" + show_cmd + " - " + commands[cmd].help);
   });
-  rtm.sendMessage(message, channel);
+  await rtm.sendMessage(message, channel);
 }
 
 var spawn = require("child_process").spawn;
 
-function do_equation(user, channel, possible_answer, ts) {
+async function do_equation(user, channel, possible_answer, ts) {
   var num_game_ids = Object.getOwnPropertyNames(appData.numsGames);
   if (num_game_ids.length < 1) return false;
   var possible_games = num_game_ids.map(id => appData.numsGames[id]).filter(game => game.channel == channel);
   if (possible_games.length < 1) return false;
 
+  console.log(`Checking answer with: ./equ.py '${possible_answer}'`);
   var proc = spawn("./equ.py", [possible_answer]);
+  appData.calculating.push({"proc": proc, "possible_games": possible_games});
   proc.stdout.setEncoding("utf-8");
   proc.stdout.on("data", data => {
+    console.log(`Result is: '${data}'`);
     var vals = data.split(" ").map(x => parseInt(x));
     if (vals[0]>99 && vals[0]<1000) {
       possible_games.forEach(function(g) {
@@ -290,6 +309,7 @@ function do_equation(user, channel, possible_answer, ts) {
     }
   });
   proc.stdout.on("close", code => {
+    console.log('End of equ.py');
     for (var i in appData.calculating) {
       if (appData.calculating[i].proc === proc) {
 	appData.calculating.splice(i,1);
@@ -297,7 +317,6 @@ function do_equation(user, channel, possible_answer, ts) {
       }
     }
   });
-  appData.calculating.push({"proc": proc, "possible_games": possible_games});
 
   return true;
 }
@@ -310,7 +329,7 @@ function arrays_equal(a, b) {
   return true;
 }
 
-function is_round_answer(user, channel, possible_answer, ts) {
+async function is_round_answer(user, channel, possible_answer, ts) {
   const is_alpha = new RegExp("^[a-zA-Z]*$");
   var ret = false;
 
@@ -328,12 +347,12 @@ function is_round_answer(user, channel, possible_answer, ts) {
 	if (arrays_equal(lpa_sorted,game_letters_sorted)) {
 	  if (g["word"].toLowerCase() == lpa) {
 	    g["winner"] = {'user': user, 'ts': ts};
-	    end_conundrum(gid);
+	    await end_conundrum(gid);
 	  } else {
 	    if (dictionary.contains(lpa)) {
-	      rtm.sendMessage(`Good guess <@${user}>, but not the 9 letter word I'm looking for!`, g.channel);
+	      await rtm.sendMessage(`Good guess <@${user}>, but not the 9 letter word I'm looking for!`, g.channel);
 	    } else {
-	      rtm.sendMessage(`The word ${possible_answer} is not in my dictionary!`, g.channel);
+	      await rtm.sendMessage(`The word ${possible_answer} is not in my dictionary!`, g.channel);
 	    }
 	  }
 	}
@@ -364,65 +383,65 @@ function is_round_answer(user, channel, possible_answer, ts) {
     return ret;
   }
   if (possible_answer.match(equ_chars_re)) {
-    ret = do_equation(user, channel, possible_answer, ts);
+    ret = await do_equation(user, channel, possible_answer, ts);
   }
 
   return ret;
 }
 
-function end_game(game_id) {
+async function end_game(game_id) {
   if (!(game_id in appData.wordGames)) return false;
   var game = appData.wordGames[game_id];
   delete appData.wordGames[game_id];
   appData.lastWords[game.channel] = game.words;
   var score = game.longest_guess;
-  var react = 'thumbsup';
-  if (game.longest_guess == game.longest_words[0].length) react = 'party';
+  var react = WORDS_SHORT_WIN;
+  if (game.longest_guess == game.longest_words[0].length) react = WORDS_MAX_WIN;
   if (score == 9) {
     score = 18;
-    react = 'party-parrot';
+    react = WORDS_9_WIN;
   }
   if (score == 0) {
-    rtm.sendMessage("Nobody found any words, try again!", game.channel);
+    await rtm.sendMessage("Nobody found any words, try again!", game.channel);
   } else {
     var winners = {};
     for (var user in game.guesses) {
       var w = game.guesses[user];
       if (w.word.length == game.longest_guess) {
-	rtm.sendMessage(`<@${user}> gets ${score} points for ${w.word}`, game.channel);
-	rtm._makeAPICall('reactions.add', {name: react}, {channel: game.channel, timestamp: w.ts});
+	await rtm.sendMessage(`<@${user}> gets ${score} points for ${w.word}`, game.channel);
+	await rtm.webClient.reactions.add({name: react, channel: game.channel, timestamp: w.ts});
       }
     }
   }
-  game.bad_guesses.forEach(w => {
-    rtm.sendMessage(`The word ${w} is not in my dictionary.`, game.channel);
+  game.bad_guesses.forEach(async (w) => {
+    await rtm.sendMessage(`The word ${w} is not in my dictionary.`, game.channel);
   });
   if (game.longest_words.length > 1) {
     var l = game.longest_words[0].length;
-    rtm.sendMessage(`The longest words were ${l} letters long: ` + game.longest_words.join(", "), game.channel);
+    await rtm.sendMessage(`The longest words were ${l} letters long: ` + game.longest_words.join(", "), game.channel);
   } else {
     var w = game.longest_words[0];
-    rtm.sendMessage(`The longest word was ${w.length} letters long: ${w}`, game.channel);
+    await rtm.sendMessage(`The longest word was ${w.length} letters long: ${w}`, game.channel);
   }
   return true;
 }
 
-function end_conundrum(game_id) {
+async function end_conundrum(game_id) {
   if (!(game_id in appData.conundrumGames)) return false;
   var game = appData.conundrumGames[game_id];
   delete appData.conundrumGames[game_id];
   if (game["winner"] === null) {
-    rtm.sendMessage("Nobody found the conundrum!", game.channel);
-    rtm.sendMessage(`The word I was looking for is: ${game["word"]}`, game.channel);
+    await rtm.sendMessage("Nobody found the conundrum!", game.channel);
+    await rtm.sendMessage(`The word I was looking for is: ${game["word"]}`, game.channel);
   } else {
     var user = game["winner"]['user'];
     var ts = game["winner"]['ts'];
-    rtm.sendMessage(`Congratulations <@${user}> the answer I was looking for was ${game["word"]}, you score 10 points!`, game.channel);
-    rtm._makeAPICall('reactions.add', {name: 'party-parrot'}, {channel: game.channel, timestamp: ts});
+    await rtm.sendMessage(`Congratulations <@${user}> the answer I was looking for was ${game["word"]}, you score 10 points!`, game.channel);
+    await rtm.webClient.reactions.add({name: CONUNDRUM_WIN, channel: game.channel, timestamp: ts});
   }
 }
 
-function end_nums_game(game_id) {
+async function end_nums_game(game_id) {
   if (!(game_id in appData.numsGames) && !(game_id in appData.numsFinishedGames)) return false;
   if (game_id in appData.numsGames) {
     appData.numsFinishedGames[game_id] = appData.numsGames[game_id];
@@ -432,8 +451,8 @@ function end_nums_game(game_id) {
   for (var c = 0; c < appData.calculating.length; c++) {
     var calc = appData.calculating[c];
     if (game in calc.possible_games) {
-      setTimeout(function() {
-	end_nums_game(game_id);
+      setTimeout(async function() {
+	await end_nums_game(game_id);
       }, 1000);
       return false;
     }
@@ -442,37 +461,37 @@ function end_nums_game(game_id) {
   var channel = game["channel"];
   var closest_guess_away = game["closest_guess_away"];
   var score = [10,7,7,7,7,7,5,5,5,5,5,0][closest_guess_away];
-  var react = 'thumbsup';
-  if (closest_guess_away == 0) react = 'party';
+  var react = NUMBERS_AWAY_WIN;
+  if (closest_guess_away == 0) react = NUMBERS_TARGET_WIN;
   if (closest_guess_away == 11) {
-    rtm.sendMessage("Nobody found a close enough solution, try again!", channel);
+    await rtm.sendMessage("Nobody found a close enough solution, try again!", channel);
   } else {
     var winners = Object.getOwnPropertyNames(game["guesses"]).filter(k => {
       return game["guesses"][k]["away"] == closest_guess_away;
     });
-    winners.forEach(user => {
+    winners.forEach(async (user) => {
       var sol = game["guesses"][user];
-      rtm.sendMessage(`<@${user}> gets ${score} points for getting to ${sol["total"]} (${closest_guess_away} away)`, channel);
-      rtm._makeAPICall('reactions.add', {name: react}, {channel: channel, timestamp: sol["ts"]});
+      await rtm.sendMessage(`<@${user}> gets ${score} points for getting to ${sol["total"]} (${closest_guess_away} away)`, channel);
+      await rtm.webClient.reactions.add({name: react, channel: channel, timestamp: sol["ts"]});
     });
   }
   if (game["shortest_solution"] === undefined || game["shortest_solution"] === null) {
-    rtm.sendMessage(`The target, ${game["target"]}, could not be achieved`, channel);
+    await rtm.sendMessage(`The target, ${game["target"]}, could not be achieved`, channel);
   } else {
     var message = `The shortest solution for ${game["target"]} is:\n`;
     message += game["shortest_solution"].join("\n");
-    rtm.sendMessage(message, channel);
+    await rtm.sendMessage(message, channel);
   }
 }
 
-function do_numbers(channel, args) {
+async function do_numbers(channel, args) {
   var t = Math.floor(Math.random()*5); // [0,4]
   if (args.length > 0 && args[0].length > 0) {
     var val = parseInt(args[0]);
     if (!isNaN(val) && val >= 0 && val <= 4) {
       t = val;
     } else {
-      rtm.sendMessage(`I did not understand "${args[0]}" as a number of large numbers between 0 and 4, continuing with a random number of large numbers.`, channel);
+      await rtm.sendMessage(`I did not understand "${args[0]}" as a number of large numbers between 0 and 4, continuing with a random number of large numbers.`, channel);
     }
   }
   var n = sample([25,50,75,100], t);
@@ -486,21 +505,21 @@ function do_numbers(channel, args) {
   var ns = n.slice();
   ns.sort((a,b) => a-b);
   appData.numsGames[game_id] = {"channel": channel, "numbers": ns, "target": total, "guesses": {}, "closest_guess_away": 11, "closest_guess": 0, "shortest_solution": undefined};
-  rtm.sendMessage(n.join(' ') + " and your total is " + total.toString() + "  you have 30 seconds.....", channel);
-  setTimeout(function() {
-    end_nums_game(game_id);
+  await rtm.sendMessage(n.join(' ') + " and your total is " + total.toString() + "  you have 30 seconds.....", channel);
+  setTimeout(async function() {
+    await end_nums_game(game_id);
   }, 30000);
   appData.numsGames[game_id].shortest_solution = shortest_numbers_solution(n, total);
 }
 
-function do_words(channel, args) {
+async function do_words(channel, args) {
   var num_vowels = 3+Math.floor(Math.random()*3); // [3,5]
   if (args.length > 0 && args[0].length > 0) {
     var val = parseInt(args[0]);
     if (!isNaN(val) && val >= 3 && val <= 5) {
       num_vowels = val;
     } else {
-      rtm.sendMessage(`I did not understand "${args[0]}" as a number of vowels between 3 and 5, continuing with a random number.`, channel);
+      await rtm.sendMessage(`I did not understand "${args[0]}" as a number of vowels between 3 and 5, continuing with a random number.`, channel);
     }
   }
   var num_consonants = 9 - num_vowels;
@@ -516,11 +535,11 @@ function do_words(channel, args) {
   letters = sample(letters, 9);
   var found_words = dictionary.wordsContaining(letters);
   if (found_words === null) {
-    rtm.sendMessage("VorderBot is not ready yet, please try again later", channel);
+    await rtm.sendMessage("VorderBot is not ready yet, please try again later", channel);
     return null;
   }
   if (found_words.length == 0) {
-    rtm.sendMessage(`VorderBot found no words for the letters ${letters}`, channel);
+    await rtm.sendMessage(`VorderBot found no words for the letters ${letters}`, channel);
     return null;
   }
   var longest_word_len = found_words[0].length;
@@ -539,14 +558,14 @@ function do_words(channel, args) {
     'longest_words': longest_words
   };
   var formatted_letters = "`" + letters.split('').join("` `") + "`"
-  rtm.sendMessage(`${formatted_letters}  (${num_vowels} vowels, ${num_consonants} consonants)  you have 30 seconds.....`, channel);
-  setTimeout(function() {
-    end_game(game_id);
+  await rtm.sendMessage(`${formatted_letters}  (${num_vowels} vowels, ${num_consonants} consonants)  you have 30 seconds.....`, channel);
+  setTimeout(async function() {
+    await end_game(game_id);
   }, 30000);
   return null;
 }
 
-function do_conundrum(channel) {
+async function do_conundrum(channel) {
   var words = dictionary.wordsWithNLetters(9);
   var word_idx = Math.floor(Math.random()*words.length);
   var word = words[word_idx];
@@ -562,14 +581,14 @@ function do_conundrum(channel) {
     'winner': null
   };
   var formatted_letters = "`" + letters.toUpperCase().split('').join("` `") + "`"
-  rtm.sendMessage(`Conundrum is ${formatted_letters}   you have 30 seconds.....`, channel);
-  setTimeout(function() {
-    end_conundrum(game_id);
+  await rtm.sendMessage(`Conundrum is ${formatted_letters}   you have 30 seconds.....`, channel);
+  setTimeout(async function() {
+    await end_conundrum(game_id);
   }, 30000);
   return null;
 }
 
-function do_last_words_list(channel, args) {
+async function do_last_words_list(channel, args) {
   if (appData.lastWords.hasOwnProperty(channel)) {
     var words_list = appData.lastWords[channel].slice();
     var word_count = 0;
@@ -587,11 +606,11 @@ function do_last_words_list(channel, args) {
 	    message = "The " + just_length.toString() + " letter words in the last words game were:";
 	    max_words = -1;
 	  } else {
-	    rtm.sendMessage("list word length out of range", channel);
+	    await rtm.sendMessage("list word length out of range", channel);
 	    return null;
 	  }
 	} catch (error) {
-	  rtm.sendMessage("\"list " + args.join(' ') + "\" not understood!", channel);
+	  await rtm.sendMessage("\"list " + args.join(' ') + "\" not understood!", channel);
 	  return null;
         }
       }
@@ -628,41 +647,51 @@ function do_last_words_list(channel, args) {
       }
       message += "\n";
     }
-    rtm.sendMessage(message, channel);
+    await rtm.sendMessage(message, channel);
   } else {
-    rtm.sendMessage("There has not been a words game on this channel", channel);
+    await rtm.sendMessage("There has not been a words game on this channel", channel);
   }
 }
 
-function do_command(user, channel, cmd, args, ts) {
+async function do_command(user, channel, cmd, args, ts) {
+  console.log(`do_command(${user}, ${channel}, ${cmd}, ${args}, ${ts})`);
   if (commands.hasOwnProperty(cmd)) {
-     commands[cmd].fn(user, channel, args, ts);
+     await commands[cmd].fn(user, channel, args, ts);
   }
 }
 
 const regex_one_or_more_spaces = new RegExp('\\s+');
 
-function process_message(user, channel, text, ts) {
-  if (!is_round_answer(user, channel, text, ts)) {
+async function process_message(user, channel, text, ts) {
+  console.log(`process_message(${user}, ${channel}, ${text}, ${ts})`);
+  if (!(await is_round_answer(user, channel, text, ts))) {
     var args = text.trim().split(regex_one_or_more_spaces);
     if (channel[0] == 'D') {
       // Direct message, don't need "@vorderbot"
-      do_command(user, channel, args[0].toLowerCase(), args.slice(1), ts);
+      console.log(`Direct message: "${text}"`);
+      await do_command(user, channel, args[0].toLowerCase(), args.slice(1), ts);
     } else {
       // Normal channel, check for "@vorderbot" as first word.
+      console.log(`Channel message: "${text}"`);
       if (args.length > 1 && is_nick(args[0], appData.selfId)) {
-        do_command(user, channel, args[1].toLowerCase(), args.slice(2), ts);
+        console.log('directed at me');
+        await do_command(user, channel, args[1].toLowerCase(), args.slice(2), ts);
       }
     }
   }
 }
 
-// The client will emit an RTM.AUTHENTICATED event on when the connection data is avaiable
-// (before the connection is open)
-rtm.on(CLIENT_EVENTS.RTM.AUTHENTICATED, (connectData) => {
-  // Cache the data necessary for this app in memory
-  appData.selfId = connectData.self.id;
-  appData.teamId = connectData.team.id;
+rtm.on('message', async (messageData) => {
+  if (!messageData.hidden) {
+    await process_message(messageData.user, messageData.channel, messageData.text, messageData.ts);
+  }
+});
+
+// Start the connecting process
+(async () => {
+  await rtm.start();
+  appData.selfId = rtm.activeUserId;
+  appData.teamId = rtm.activeTeamId;
   appData.conundrumGames = {};
   appData.wordGames = {};
   appData.numsGames = {};
@@ -670,19 +699,4 @@ rtm.on(CLIENT_EVENTS.RTM.AUTHENTICATED, (connectData) => {
   appData.calculating = [];
   appData.lastWords = {};
   console.log(`Logged in as ${appData.selfId} of team ${appData.teamId}`);
-});
-
-// The client will emit an RTM.RTM_CONNECTION_OPEN the connection is ready for
-// sending and recieving messages
-rtm.on(CLIENT_EVENTS.RTM.RTM_CONNECTION_OPEN, () => {
-  console.log(`Ready`);
-});
-
-rtm.on(RTM_EVENTS.MESSAGE, (messageData) => {
-  if (!messageData.hidden) {
-    process_message(messageData.user, messageData.channel, messageData.text, messageData.ts);
-  }
-});
-
-// Start the connecting process
-rtm.start();
+})();

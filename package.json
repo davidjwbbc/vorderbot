@@ -3,11 +3,29 @@
   "version": "1.0.0",
   "description": "VorderBot - A Countdown Bot",
   "main": "vorderbot.js",
-  "dependencies": {"@slack/client": "3.15.0"},
+  "dependencies": {
+    "@slack/rtm-api": "^5.0.5",
+    "@slack/web-api": "^5.11.0",
+    "https-proxy-agent": "^5.0.0"
+  },
   "devDependencies": {},
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "David Waring",
-  "license": "ISC"
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/davidjwbbc/vorderbot.git"
+  },
+  "keywords": [
+    "words",
+    "numbers",
+    "countdown",
+    "game"
+  ],
+  "bugs": {
+    "url": "https://github.com/davidjwbbc/vorderbot/issues"
+  },
+  "homepage": "https://github.com/davidjwbbc/vorderbot#readme"
 }

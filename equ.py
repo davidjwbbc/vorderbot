@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 #
 # Vorderbot equation checker based on the arithmetic expression parser example
 # by Paul McGuire.
@@ -15,7 +15,7 @@ from pyparsing import *
 import sys
 
 if len(sys.argv) != 2:
-    print '-1'
+    print('-1')
     sys.exit(0)
 
 __used_ints__ = []
@@ -60,4 +60,4 @@ try:
 except (ParseException, ValueError, ZeroDivisionError):
     ans = -1
 
-print "%i %s"%(ans, ' '.join(['%i'%i for i in __used_ints__]))
+print("%i %s"%(ans, ' '.join(['%i'%i for i in __used_ints__])))
